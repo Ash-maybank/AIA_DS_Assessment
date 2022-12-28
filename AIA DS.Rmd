@@ -1,0 +1,571 @@
+---
+title: "AIA DS"
+author: "Ash"
+date: '2022-12-24'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(sqldf)
+
+```
+
+## Import Dataset & ETL (Export, Transfor, Load)
+
+```{r, echo=FALSE}
+setwd("C:/Ash/X Document/Interview/AIA/DS Assessment/assessment_data")
+
+
+Agent = read.csv("AGENT.csv")
+B = read.csv("B.csv")
+C = read.csv("C.csv")
+D = read.csv("D.csv")
+E = read.csv("E.csv")
+Main = read.csv("MAIN.csv")
+
+Final = left_join(Main,Agent,by = "AGT_CD")
+#Final = left_join(Final,Support2, by = c("PRODUCT_CD" = "PURPOSE_CODE"))
+#Final = left_join(Final,Support1, by = c("PRODUCT_CD" = "PURPOSE_CODE","S_BASE" = "CHAR_VALUE2"))
+
+Final = sqldf('
+SELECT A.*
+,CASE 
+    WHEN A.S_BASE = "POLA" THEN "Accident"
+    WHEN TRIM(D.CHAR_VALUE) IS NOT NULL THEN TRIM(D.CHAR_VALUE)
+    WHEN TRIM(E.CHAR_VALUE) IS NOT NULL THEN TRIM(E.CHAR_VALUE)
+    WHEN TRIM(B.CHAR_VALUE) IS NOT NULL AND TRIM(B.CHAR_VALUE) <> "Medical" THEN TRIM(B.CHAR_VALUE)
+    WHEN TRIM(B.CHAR_VALUE) IS NOT NULL AND TRIM(B.CHAR_VALUE) = "Medical" THEN "Other Medical"
+    WHEN TRIM(C.CHAR_VALUE) IS NOT NULL AND TRIM(C.CHAR_VALUE) <> "Medical" THEN TRIM(C.CHAR_VALUE)
+    WHEN TRIM(C.CHAR_VALUE) IS NOT NULL AND TRIM(C.CHAR_VALUE) = "Medical" THEN "Other Medical"
+      END AS MAIN_NEED
+
+FROM Final A
+LEFT JOIN B B ON A.PRODUCT_CD=B.PURPOSE_CODE AND A.S_BASE=B.CHAR_VALUE2
+LEFT JOIN C C ON A.PRODUCT_CD=C.PURPOSE_CODE
+LEFT JOIN D D ON A.PRODUCT_CD=D.PURPOSE_CODE AND A.S_BASE=D.CHAR_VALUE2
+LEFT JOIN E E ON A.PRODUCT_CD=E.PURPOSE_CODE
+')
+
+
+Final = sqldf('
+SELECT *
+,CASE
+  WHEN PROD_CAT <> "" THEN PROD_CAT
+  WHEN PROD_SUBCAT_IND_1 = 1 AND
+    (PROD_SUBCAT_IND_2 = 1 OR MAIN_NEED IN ("Medical","Other Medical","Critical Illness"))
+      THEN "Cat 2"
+  ELSE "Cat 3" END AS PROD_CATS
+FROM Final
+WHERE AGT_CHANNEL = "AGENCY"
+AND AGT_STATUS = "INFORCE"
+')
+
+
+
+Policy = sqldf('
+SELECT DISTINCT AGT_CD ,POLICY_NO
+,SUM(ANP_RIDER) AS ANP_RIDER
+,SUM(VIT_MBR_IND) AS VIT_MBR_IND
+
+,SUM(CASE WHEN COVERAGE_TYPE_IND IN ("R") THEN 1 ELSE 0 END) AS N_RIDER
+,SUM(CASE WHEN COVERAGE_TYPE_IND IN ("R") THEN ANP_RIDER ELSE 0 END) AS ANP_POLICYRIDER
+,SUM(CASE WHEN COVERAGE_TYPE_IND IN ("B") THEN 1 ELSE 0 END) AS N_BASIC
+,SUM(CASE WHEN COVERAGE_TYPE_IND IN ("B") THEN ANP_RIDER ELSE 0 END) AS ANP_BASIC
+
+,SUM(CASE WHEN PROD_CATS IN ("Cat 1") THEN 1 ELSE 0 END) AS N_CAT1
+,SUM(CASE WHEN PROD_CATS IN ("Cat 2") THEN 1 ELSE 0 END) AS N_CAT2
+,SUM(CASE WHEN PROD_CATS IN ("Cat 3") THEN 1 ELSE 0 END) AS N_CAT3
+,SUM(CASE WHEN PROD_CATS IN ("Cat 1") THEN ANP_RIDER ELSE 0 END) AS ANP_CAT1
+,SUM(CASE WHEN PROD_CATS IN ("Cat 2") THEN ANP_RIDER ELSE 0 END) AS ANP_CAT2
+,SUM(CASE WHEN PROD_CATS IN ("Cat 3") THEN ANP_RIDER ELSE 0 END) AS ANP_CAT3
+
+,MAX(CASE WHEN MAIN_NEED IN ("Accident") THEN 1 ELSE 0 END) AS F_ACCIDENT
+,SUM(CASE WHEN MAIN_NEED IN ("Accident") THEN ANP_RIDER ELSE 0 END) AS ANP_ACCIDENT
+,MAX(CASE WHEN MAIN_NEED IN ("Critical Illness") THEN 1 ELSE 0 END) AS F_CI
+,SUM(CASE WHEN MAIN_NEED IN ("Critical Illness") THEN ANP_RIDER ELSE 0 END) AS ANP_CI
+,MAX(CASE WHEN MAIN_NEED IN ("Disability") THEN 1 ELSE 0 END) AS F_DISABILITY
+,SUM(CASE WHEN MAIN_NEED IN ("Disability") THEN ANP_RIDER ELSE 0 END) AS ANP_DISABILITY
+,MAX(CASE WHEN MAIN_NEED IN ("Endowment") THEN 1 ELSE 0 END) AS F_ENDOWMENT
+,SUM(CASE WHEN MAIN_NEED IN ("Endowment") THEN ANP_RIDER ELSE 0 END) AS ANP_ENDOWMENT
+,MAX(CASE WHEN MAIN_NEED IN ("Income") THEN 1 ELSE 0 END) AS F_INCOME
+,SUM(CASE WHEN MAIN_NEED IN ("Income") THEN ANP_RIDER ELSE 0 END) AS ANP_INCOME
+,MAX(CASE WHEN MAIN_NEED IN ("Life") THEN 1 ELSE 0 END) AS F_LIFE
+,SUM(CASE WHEN MAIN_NEED IN ("Life") THEN ANP_RIDER ELSE 0 END) AS ANP_LIFE
+,MAX(CASE WHEN MAIN_NEED IN ("Medical") THEN 1 ELSE 0 END) AS F_MEDICAL
+,SUM(CASE WHEN MAIN_NEED IN ("Medical") THEN ANP_RIDER ELSE 0 END) AS ANP_MEDICAL
+,MAX(CASE WHEN MAIN_NEED IN ("Other Medical") THEN 1 ELSE 0 END) AS F_OTHERMED
+,SUM(CASE WHEN MAIN_NEED IN ("Other Medical") THEN ANP_RIDER ELSE 0 END) AS ANP_OTHERMED
+,MAX(CASE WHEN MAIN_NEED IN ("Payor/Waiver") THEN 1 ELSE 0 END) AS F_PAYOR
+,SUM(CASE WHEN MAIN_NEED IN ("Payor/Waiver") THEN ANP_RIDER ELSE 0 END) AS ANP_PAYOR
+,MAX(CASE WHEN MAIN_NEED IN ("Savers") THEN 1 ELSE 0 END) AS F_SAVERS
+,SUM(CASE WHEN MAIN_NEED IN ("Savers") THEN ANP_RIDER ELSE 0 END) AS ANP_SAVERS
+,MAX(CASE WHEN MAIN_NEED IN ("NA") THEN 1 ELSE 0 END) AS F_NA
+,SUM(CASE WHEN MAIN_NEED IN ("NA") THEN ANP_RIDER ELSE 0 END) AS ANP_NA
+
+FROM Final
+GROUP BY 1,2
+')
+
+
+
+
+```
+
+## Data exploration
+
+##   i. By product categories?
+##      a. What is the total number of policies sold?
+##      b. What is the total ANP?
+##  ii. Number of agents who sold at least 5 Vitality attached policy.
+## iii. Number of policies with at least 3 riders attached.
+
+```{r}
+
+## Answer i (a)
+
+agg_NOP = Final %>% group_by(PROD_CATS) %>% summarise(ttl_NOP = n())
+##agg_NOP = aggregate(Final$POLICY_NO ,by=list(Final$PROD_CATS) , FUN=length)
+agg_NOP
+
+
+## Answer i (a)
+
+agg_ANP = Final %>% group_by(PROD_CATS) %>% summarise(ttl_ANP = sum(ANP_RIDER))
+##agg_ANP = aggregate(Final$ANP_RIDER ,by=list(Final$PROD_CATS) , FUN=sum)
+agg_ANP
+
+## Answer ii
+
+length(unique(filter(Policy, VIT_MBR_IND>=5)$AGT_CD))
+
+
+## Answer iii
+
+nrow(filter(Policy, N_RIDER>=3))
+
+
+```
+
+
+## Exploring
+
+## Create Policy Category
+
+## Create Agent Summary
+
+```{r, echo=FALSE}
+
+Policy$POLICY_CAT <- ifelse(Policy$N_CAT1 > 0 & Policy$N_CAT2 > 0 ,"CAT 1 & CAT 2",
+                     ifelse(Policy$N_CAT1 > 0 & Policy$N_CAT2 == 0 ,"CAT 1",
+                     ifelse(Policy$N_CAT1 == 0 & Policy$N_CAT2 > 0 ,"CAT 2",
+                       "CAT 3")))
+
+aggregate(Policy$POLICY_NO, by=list(Policy$POLICY_CAT) ,FUN=length)
+
+
+
+Agent_Distinct = sqldf('
+SELECT DISTINCT AGT_CD
+,COUNT(POLICY_NO) AS N_POLICY
+,SUM(CASE WHEN VIT_MBR_IND>0 THEN 1 ELSE 0 END) AS N_VIT
+,AVG(ANP_RIDER) AS AVG_ANP
+,AVG(ANP_POLICYRIDER) AS AVG_ANP_RIDER
+,AVG(N_RIDER) AS AVG_N_RIDER
+,AVG(ANP_BASIC) AS AVG_ANP_BASIC
+,SUM(CASE WHEN POLICY_CAT IN ("CAT 1 & CAT 2") THEN 1 ELSE 0 END) AS N_POLICY_CAT1_CAT2
+,SUM(CASE WHEN POLICY_CAT IN ("CAT 1") THEN 1 ELSE 0 END) AS N_POLICY_CAT1
+,SUM(CASE WHEN POLICY_CAT IN ("CAT 2") THEN 1 ELSE 0 END) AS N_POLICY_CAT2
+,SUM(CASE WHEN POLICY_CAT IN ("CAT 3") THEN 1 ELSE 0 END) AS N_POLICY_CAT3
+
+,SUM(F_ACCIDENT) AS N_ACCIDENT
+,SUM(F_CI) AS N_CI
+,SUM(F_DISABILITY) AS N_DISABILITY
+,SUM(F_ENDOWMENT) AS N_ENDOWMENT
+,SUM(F_INCOME) AS N_INCOME
+,SUM(F_LIFE) AS N_LIFE
+,SUM(F_MEDICAL) AS N_MEDICAL
+,SUM(F_OTHERMED) AS N_OTHERMED
+,SUM(F_PAYOR) AS N_PAYOR
+,SUM(F_SAVERS) AS N_SAVERS
+
+,SUM(F_ACCIDENT)+SUM(F_DISABILITY)+SUM(F_PAYOR)+SUM(F_SAVERS) AS N_GI
+,SUM(F_CI)+SUM(F_INCOME)+SUM(F_MEDICAL)+SUM(F_OTHERMED) AS N_MED
+,SUM(F_LIFE)+SUM(F_ENDOWMENT) AS N_LI
+FROM Policy
+GROUP BY 1
+')
+
+
+
+quantile(Agent_Distinct$N_POLICY, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$N_VIT, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$AVG_ANP, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$AVG_ANP_BASIC, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$AVG_ANP_RIDER, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$AVG_N_RIDER, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+
+quantile(Agent_Distinct$N_LI, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$N_MED, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+quantile(Agent_Distinct$N_GI, probs = c(0.2,0.4,0.5,0.6,0.8,0.9,1))
+
+
+
+
+```
+
+
+
+## BINNING
+
+
+```{r}
+
+Agent_Distinct$BIN_POLICY <- (ifelse(Agent_Distinct$N_POLICY < quantile(Agent_Distinct$N_POLICY, probs = 0.2) , 1,
+                              ifelse(Agent_Distinct$N_POLICY < quantile(Agent_Distinct$N_POLICY, probs = 0.4) , 2,
+                              ifelse(Agent_Distinct$N_POLICY < quantile(Agent_Distinct$N_POLICY, probs = 0.6) , 3,
+                              ifelse(Agent_Distinct$N_POLICY < quantile(Agent_Distinct$N_POLICY, probs = 0.8) , 4,
+                                5)))))
+summary(Agent_Distinct$BIN_POLICY)
+
+Agent_Distinct$BIN_VIT <- (ifelse(Agent_Distinct$N_VIT <= quantile(Agent_Distinct$N_VIT, probs = 0.2) , 1,
+                           ifelse(Agent_Distinct$N_VIT <= quantile(Agent_Distinct$N_VIT, probs = 0.4) , 2,
+                           ifelse(Agent_Distinct$N_VIT <= quantile(Agent_Distinct$N_VIT, probs = 0.6) , 3,
+                           ifelse(Agent_Distinct$N_VIT <= quantile(Agent_Distinct$N_VIT, probs = 0.8) , 4,
+                             5)))))
+summary(Agent_Distinct$BIN_VIT)
+
+Agent_Distinct$BIN_ANP <- (ifelse(Agent_Distinct$AVG_ANP <= quantile(Agent_Distinct$AVG_ANP, probs = 0.2) , 1,
+                           ifelse(Agent_Distinct$AVG_ANP <= quantile(Agent_Distinct$AVG_ANP, probs = 0.4) , 2,
+                           ifelse(Agent_Distinct$AVG_ANP <= quantile(Agent_Distinct$AVG_ANP, probs = 0.6) , 3,
+                           ifelse(Agent_Distinct$AVG_ANP <= quantile(Agent_Distinct$AVG_ANP, probs = 0.8) , 4,
+                             5)))))
+summary(Agent_Distinct$BIN_ANP)
+
+Agent_Distinct$BIN_ANP_B <-
+  (ifelse(Agent_Distinct$AVG_ANP_BASIC <= quantile(Agent_Distinct$AVG_ANP_BASIC, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$AVG_ANP_BASIC <= quantile(Agent_Distinct$AVG_ANP_BASIC, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$AVG_ANP_BASIC <= quantile(Agent_Distinct$AVG_ANP_BASIC, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$AVG_ANP_BASIC <= quantile(Agent_Distinct$AVG_ANP_BASIC, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_ANP_B)
+
+Agent_Distinct$BIN_ANP_R <-
+  (ifelse(Agent_Distinct$AVG_ANP_RIDER <= quantile(Agent_Distinct$AVG_ANP_RIDER, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$AVG_ANP_RIDER <= quantile(Agent_Distinct$AVG_ANP_RIDER, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$AVG_ANP_RIDER <= quantile(Agent_Distinct$AVG_ANP_RIDER, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$AVG_ANP_RIDER <= quantile(Agent_Distinct$AVG_ANP_RIDER, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_ANP_R)
+
+Agent_Distinct$BIN_LIFE <-
+  (ifelse(Agent_Distinct$N_LIFE <= quantile(Agent_Distinct$N_LIFE, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_LIFE <= quantile(Agent_Distinct$N_LIFE, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_LIFE <= quantile(Agent_Distinct$N_LIFE, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_LIFE <= quantile(Agent_Distinct$N_LIFE, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_LIFE)
+
+Agent_Distinct$BIN_ENDOWMENT <-
+  (ifelse(Agent_Distinct$N_ENDOWMENT <= quantile(Agent_Distinct$N_ENDOWMENT, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_ENDOWMENT <= quantile(Agent_Distinct$N_ENDOWMENT, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_ENDOWMENT <= quantile(Agent_Distinct$N_ENDOWMENT, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_ENDOWMENT <= quantile(Agent_Distinct$N_ENDOWMENT, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_ENDOWMENT)
+
+Agent_Distinct$BIN_ACCIDENT <-
+  (ifelse(Agent_Distinct$N_ACCIDENT <= quantile(Agent_Distinct$N_ACCIDENT, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_ACCIDENT <= quantile(Agent_Distinct$N_ACCIDENT, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_ACCIDENT <= quantile(Agent_Distinct$N_ACCIDENT, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_ACCIDENT <= quantile(Agent_Distinct$N_ACCIDENT, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_ACCIDENT)
+
+Agent_Distinct$BIN_CI <-
+  (ifelse(Agent_Distinct$N_CI <= quantile(Agent_Distinct$N_CI, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_CI <= quantile(Agent_Distinct$N_CI, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_CI <= quantile(Agent_Distinct$N_CI, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_CI <= quantile(Agent_Distinct$N_CI, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_CI)
+
+Agent_Distinct$BIN_DISABILITY <-
+  (ifelse(Agent_Distinct$N_DISABILITY <= quantile(Agent_Distinct$N_DISABILITY, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_DISABILITY <= quantile(Agent_Distinct$N_DISABILITY, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_DISABILITY <= quantile(Agent_Distinct$N_DISABILITY, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_DISABILITY <= quantile(Agent_Distinct$N_DISABILITY, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_DISABILITY)
+
+Agent_Distinct$BIN_INCOME <-
+  (ifelse(Agent_Distinct$N_INCOME <= quantile(Agent_Distinct$N_INCOME, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_INCOME <= quantile(Agent_Distinct$N_INCOME, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_INCOME <= quantile(Agent_Distinct$N_INCOME, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_INCOME <= quantile(Agent_Distinct$N_INCOME, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_INCOME)
+
+Agent_Distinct$BIN_MEDICAL <-
+  (ifelse(Agent_Distinct$N_MEDICAL <= quantile(Agent_Distinct$N_MEDICAL, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_MEDICAL <= quantile(Agent_Distinct$N_MEDICAL, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_MEDICAL <= quantile(Agent_Distinct$N_MEDICAL, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_MEDICAL <= quantile(Agent_Distinct$N_MEDICAL, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_MEDICAL)
+
+Agent_Distinct$BIN_OTHERMED <-
+  (ifelse(Agent_Distinct$N_OTHERMED <= quantile(Agent_Distinct$N_OTHERMED, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_OTHERMED <= quantile(Agent_Distinct$N_OTHERMED, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_OTHERMED <= quantile(Agent_Distinct$N_OTHERMED, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_OTHERMED <= quantile(Agent_Distinct$N_OTHERMED, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_OTHERMED)
+
+Agent_Distinct$BIN_PAYOR <-
+  (ifelse(Agent_Distinct$N_PAYOR <= quantile(Agent_Distinct$N_PAYOR, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_PAYOR <= quantile(Agent_Distinct$N_PAYOR, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_PAYOR <= quantile(Agent_Distinct$N_PAYOR, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_PAYOR <= quantile(Agent_Distinct$N_PAYOR, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_PAYOR)
+
+Agent_Distinct$BIN_SAVERS <-
+  (ifelse(Agent_Distinct$N_SAVERS <= quantile(Agent_Distinct$N_SAVERS, probs = 0.2) , 1,
+   ifelse(Agent_Distinct$N_SAVERS <= quantile(Agent_Distinct$N_SAVERS, probs = 0.4) , 2,
+   ifelse(Agent_Distinct$N_SAVERS <= quantile(Agent_Distinct$N_SAVERS, probs = 0.6) , 3,
+   ifelse(Agent_Distinct$N_SAVERS <= quantile(Agent_Distinct$N_SAVERS, probs = 0.8) , 4,
+     5)))))
+summary(Agent_Distinct$BIN_SAVERS)
+
+Agent_Score = subset(Agent_Distinct, select = c(AGT_CD
+                                                ,BIN_POLICY
+                                                ,BIN_VIT
+                                                ,BIN_ANP
+                                                ,BIN_ANP_B
+                                                ,BIN_ANP_R
+                                                ,BIN_ACCIDENT
+                                                ,BIN_CI
+                                                ,BIN_DISABILITY
+                                                ,BIN_ENDOWMENT
+                                                ,BIN_INCOME
+                                                ,BIN_LIFE
+                                                ,BIN_MEDICAL
+                                                ,BIN_OTHERMED
+                                                ,BIN_PAYOR
+                                                ,BIN_SAVERS
+                                                ))
+
+Agent_FNL = subset(Agent_Score, select = AGT_CD)
+
+Agent_FNL$SCORE_POLICY = Agent_Score$BIN_POLICY
+Agent_FNL$SCORE_VIT = Agent_Score$BIN_VIT
+Agent_FNL$SCORE_ANP = (Agent_Score$BIN_ANP+Agent_Score$BIN_ANP_B+Agent_Score$BIN_ANP_R)/3
+Agent_FNL$SCORE_LIFE = (Agent_Score$BIN_LIFE+Agent_Score$BIN_ENDOWMENT)/2
+Agent_FNL$SCORE_MEDIC = (Agent_Score$BIN_INCOME+Agent_Score$BIN_MEDICAL+Agent_Score$BIN_OTHERMED+Agent_Score$BIN_CI)/4
+Agent_FNL$SCORE_OTH = (Agent_Score$BIN_ACCIDENT+Agent_Score$BIN_DISABILITY+Agent_Score$BIN_PAYOR+Agent_Score$BIN_SAVERS)/4
+
+Agent_FNL$SCORE_TOTAL = Agent_FNL$SCORE_POLICY+Agent_FNL$SCORE_VIT+Agent_FNL$SCORE_ANP+Agent_FNL$SCORE_LIFE+Agent_FNL$SCORE_MEDIC+Agent_FNL$SCORE_OTH
+
+
+
+
+```
+
+
+## Agent Segmentation
+
+```{r pressure, echo=FALSE}
+
+library(scales)
+library(cluster)
+library(factoextra)
+library(NbClust)
+library(tidyverse)
+
+set.seed(458)
+
+Agent_km = subset(Agent_FNL, select = -c(AGT_CD))
+
+wss = function(k) {
+  kmeans(Agent_km, k, nstart=10)$tot.withinss
+}
+
+k.values = 2:10
+
+wss_values = map_dbl(k.values, wss)
+
+plot(k.values, wss_values,
+     type = "b", pch = 19, frame = F
+     ,xlab = "No of Clusters"
+     ,ylab = "wss")
+
+fviz_nbclust(Agent_km, kmeans, method = "wss")
+
+#calculate gap statistic based on number of clusters
+gap_stat <- clusGap(Agent_km,
+                    FUN = kmeans,
+                    nstart = 25,
+                    K.max = 10,
+                    B = 50)
+
+#plot number of clusters vs. gap statistic
+fviz_gap_stat(gap_stat)
+
+
+#perform k-means clustering with k = 4 clusters
+km5 <- kmeans(Agent_km, centers = 5, nstart = 25)
+
+km5$size
+km5$centers
+
+Agent_FNL$cluster = km5$cluster
+Agent_Distinct$cluster = km5$cluster
+Agent_Distinct$SCORE_LIFE = Agent_FNL$SCORE_LIFE
+Agent_Distinct$SCORE_MEDIC = Agent_FNL$SCORE_MEDIC
+Agent_Distinct$SCORE_OTH = Agent_FNL$SCORE_OTH
+
+
+
+#write.csv(Agent_Distinct, "C:/Ash/X Document/Interview/AIA/DS Assessment/assessment_data/Score.csv")
+
+
+```
+
+Even though the optimal number of cluster are shown at 9 different clusters,
+based on wss graph and potential business case, number of cluster is chosen are 5 clusters.
+
+Sometimes, too many cluster are not optimize for business objectives,
+and too little did not give any insight that business need.
+
+
+
+## AGENT PROFILING AND PRODUCT SCORING
+
+Scoring in based on binning into 5 groups based on pentile.
+Lowest 20% of the attribute is assigned score of 1 and Highest 20% of the attribute in assign score of 5.
+There are 3 categories of Insurance in this analysis
+Group 1: Life Insurance (Life & Endowment)
+Group 2: Medical Insurance (Critical Illness, Medical, Other Medical, & Income)
+Group 3: Other Insurance (Accident, Disability, Payor/Waiver, Savers)
+
+
+  SCORE_POLICY SCORE_VIT SCORE_ANP SCORE_LIFE SCORE_MEDIC SCORE_OTH
+1     3.856870  1.730916  2.739186   2.798664    3.382634  3.570611
+2     3.201705  3.964489  3.079545   2.587358    2.669744  2.930398
+3     1.521870  1.435897  1.604324   1.234540    1.347662  1.333333
+4     1.663793  1.853448  3.823563   1.743103    1.788793  1.800431
+5     4.610526  4.525000  3.692544   4.107237    4.167763  4.456579
+
+
+
+
+```{r}
+
+
+aggregate(Agent_Distinct$N_POLICY ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_VIT ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$AVG_ANP ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$AVG_ANP_RIDER ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$AVG_N_RIDER ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$AVG_ANP_BASIC ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_POLICY_CAT1_CAT2 ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_POLICY_CAT1 ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_POLICY_CAT2 ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_POLICY_CAT3 ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_ACCIDENT ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_CI ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_DISABILITY ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_ENDOWMENT ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_INCOME ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_LIFE ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_MEDICAL ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_OTHERMED ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_PAYOR ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$N_SAVERS ,by=list(Agent_Distinct$cluster) , FUN = mean)
+
+aggregate(Agent_Distinct$SCORE_LIFE ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$SCORE_MEDIC ,by=list(Agent_Distinct$cluster) , FUN = mean)
+aggregate(Agent_Distinct$SCORE_OTH ,by=list(Agent_Distinct$cluster) , FUN = mean)
+
+
+
+
+
+
+```
+
+## SUMMARY PROFILING ATTRIBUTE BY CLUSTER
+
+Cluster                               1       2       3       4       5
+Average of N_POLICY	               48.32	 31.33   	7.25	  8.24	 89.61
+Average of N_VIT	                  0.79	  6.42	  0.51	  1.04	 15.33
+Average of AVG_ANP	              249.11	322.19	139.03	491.72	395.83
+Average of AVG_ANP_RIDER	         49.81	 70.46	 22.29	137.25	 93.16
+Average of AVG_N_RIDER	            3.05	  3.04	  1.64	  3.82	  3.45
+Average of AVG_ANP_BASIC	        199.30	251.73	116.74	354.47	302.67
+Average of N_POLICY_CAT1_CAT2   	  0.29	  0.46	  0.01	  0.23	  2.59
+Average of N_POLICY_CAT1        	  2.12	  2.45	  0.14	  1.07	  7.42
+Average of N_POLICY_CAT2        	 24.32	 11.98	  1.99	  3.49	 42.63
+Average of N_POLICY_CAT3        	 21.58	 16.44	  5.11	  3.46	 36.97
+Average of N_ACCIDENT         	   10.66	  4.82    1.56	  0.72	 19.61
+Average of N_CI	                   11.25	  6.76	  0.65	  2.21	 29.76
+Average of N_DISABILITY	           25.98	 17.54	  2.67	  5.39	 57.69
+Average of N_ENDOWMENT	            0.57	  0.73	  0.03	  0.39	  2.75
+Average of N_INCOME	                8.02	  2.52	  0.21	  0.97	 16.15
+Average of N_LIFE	                 25.72	 16.94	  2.70	  5.10	 55.52
+Average of N_MEDICAL	             30.81	 16.09	  3.37	  4.37	 50.20
+Average of N_OTHERMED               1.44	  1.27	  0.16	  0.43	  4.89
+Average of N_PAYOR	               15.09	 10.47	  1.19	  3.18	 37.40
+Average of N_SAVERS	               19.28	 10.94	  0.73	  4.18	 48.29
+Average of SCORE_LIFE		            2.80	  2.59	  1.23	  1.74	  4.11
+Average of SCORE_MEDIC	            3.38	  2.67	  1.35	  1.79	  4.17
+Average of SCORE_OTH		            3.57	  2.93	  1.33	  1.80	  4.46
+
+
+Cluster 1: Agent by Numbers
+
+-This cluster show agent that sell high number of policy but at slightly lower premium
+-Agent have tendencies to sell Medical and Other Insurance as compared to Life Insurance
+
+Cluster 2: Agent by Premium
+
+-This cluster show agent that sell moderate to high number of policy but at higher premium compared to Cluster 1
+-Agent seems to sell overall package of policy without favoring any specific policy
+
+Cluster 3: Agent in Training
+
+-This cluster show lowest performing agents in terms of number of policy, annualized new premium, and number of rider policy
+
+Cluster 4: Agent by Quality
+
+-This cluster show agents that sell low number of policy but at very high premium, in fact highest compared to other clusters
+
+Cluster 5: Agent by Versatility
+
+-This cluster can be considered the optimum (best) performance on cluster compared to others.
+-This cluster can sell high number of policy, at high premium, with highest number of rider policy.
+-The highest number of policy in all categories; Cat 1, Cat 2, and Cat 3
+-Agent in this cluster also can sell any type of policy to customer since they have highest average score in all 3 categories; Life Insurance, Mendical Insurance, and Other Insurance.
+
+## List of Agent with Product Scoring
+
+SCORE_POLICY = Score based on Numbers of Policy Sold
+SCORE_VIT = Score based on Number of Vitality Attached Policy
+SCORE_ANP = Score based on Amount of ANP
+SCORE_LIFE = Average Score based on Policy under Life Insurance Group
+SCORE_MEDIC = Average Score based on Policy under Medical Insurance Group
+SCORE_OTH = Average Score based on Policy under Other Insurance Group 
+cluster = Which cluster group they belong to
+
+```{r}
+
+
+Agent_FNL
+
+
+```
